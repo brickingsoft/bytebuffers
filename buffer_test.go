@@ -2,6 +2,7 @@ package bytebuffers_test
 
 import (
 	"bytes"
+	"crypto/rand"
 	"github.com/brickingsoft/bytebuffers"
 	"os"
 	"strings"
@@ -92,31 +93,58 @@ func TestBuffer_Write(t *testing.T) {
 	t.Log("w3", wn, buf.Len(), buf.Cap(), len(secondData)) // w3 4096 4096 8192 4096
 }
 
-// BenchmarkBuffer-20    	20256279	        58.55 ns/op	         0 failed	       0 B/op	       0 allocs/op
+// BenchmarkBuffer
+// BenchmarkBuffer-4   	24202024	        46.81 ns/op	       0 B/op	       0 allocs/op
 func BenchmarkBuffer(b *testing.B) {
-	//failed := new(atomic.Int64)
-	var err error
-	buf := bytebuffers.NewBuffer()
-	defer buf.Close()
-	pagesize := os.Getpagesize()
-	firstData := []byte(strings.Repeat("abcd", pagesize/8))
-	secondData := []byte(strings.Repeat("defg", pagesize/4))
-
-	_, _ = buf.Write(firstData)
-
-	p := make([]byte, pagesize)
-
 	b.ReportAllocs()
+
+	buf := bytebuffers.Acquire()
+	defer bytebuffers.Release(buf)
+
+	rb := make([]byte, 4096)
+	wb := make([]byte, 4096)
+
+	buf.Write(wb)
+	buf.Read(wb)
+
+	buf.Reset()
+
+	rb = make([]byte, 4096*2)
+	wb = make([]byte, 4096*2)
+
+	rand.Read(wb)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err = buf.Write(secondData)
-		if err != nil {
-			//failed.Add(1)
-		}
-		_, err = buf.Read(p)
-		if err != nil {
-			//failed.Add(1)
-		}
+		buf.Write(wb)
+		buf.Read(rb)
+		buf.Reset()
 	}
-	//b.ReportMetric(float64(failed.Load()), "failed")
+}
+
+// BenchmarkStandByteBuffer
+// BenchmarkStandByteBuffer-20    	12543076	        98.56 ns/op	       0 B/op	       0 allocs/op
+func BenchmarkStandByteBuffer(b *testing.B) {
+	b.ReportAllocs()
+
+	buf := bytes.NewBuffer(nil)
+
+	rb := make([]byte, 4096)
+	wb := make([]byte, 4096)
+
+	buf.Write(wb)
+	buf.Read(wb)
+
+	buf.Reset()
+
+	rb = make([]byte, 4096*2)
+	wb = make([]byte, 4096*2)
+
+	rand.Read(wb)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Write(wb)
+		buf.Read(rb)
+		buf.Reset()
+	}
 }
