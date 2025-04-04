@@ -94,7 +94,7 @@ func TestBuffer_Write(t *testing.T) {
 }
 
 // BenchmarkBuffer
-// BenchmarkBuffer-4   	24202024	        46.81 ns/op	       0 B/op	       0 allocs/op
+// BenchmarkBuffer-20    	13330725	        82.67 ns/op	       0 B/op	       0 allocs/op
 func BenchmarkBuffer(b *testing.B) {
 	b.ReportAllocs()
 
