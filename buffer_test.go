@@ -90,6 +90,16 @@ func TestBuffer_Write(t *testing.T) {
 	t.Log("w3", wn, buf.Len(), buf.Capacity(), len(secondData)) // w3 4096 4096 8192 4096
 }
 
+func TestBuffer_Set(t *testing.T) {
+	b := bytebuffers.NewBuffer()
+	defer bytebuffers.Release(b)
+	b.WriteString("0123456789")
+	b.SetString("abdce")
+
+	p := b.CloneBytes()
+	t.Log(string(p), string(p) == "abdce")
+}
+
 // BenchmarkBuffer
 // BenchmarkBuffer-20    	13220983	        86.01 ns/op	       0 B/op	       0 allocs/op
 func BenchmarkBuffer(b *testing.B) {
