@@ -43,12 +43,27 @@ type Buffer interface {
 	// Write
 	// 写入
 	Write(p []byte) (n int, err error)
+	// WriteByte
+	// 写入字节
+	WriteByte(c byte) (err error)
+	// WriteString
+	// 写入字符串
+	WriteString(s string) (n int, err error)
+	// Set
+	// 重写入可读字节
+	Set(p []byte) (err error)
+	// SetString
+	// 重写入可读字符串
+	SetString(s string) (err error)
 	// ReadFrom
 	// 从一流里读取
 	ReadFrom(r io.Reader) (n int64, err error)
 	// WriteTo
 	// 写入一个流
 	WriteTo(w io.Writer) (n int64, err error)
+	// CloneBytes
+	// 复制字节，非读操作。
+	CloneBytes() []byte
 	// Borrow
 	// 借出
 	Borrow(size int) (p []byte, err error)
@@ -135,6 +150,16 @@ func (buf *buffer) Peek(n int) (p []byte) {
 	}
 	p = buf.b[buf.r:buf.w]
 	return
+}
+
+func (buf *buffer) CloneBytes() []byte {
+	p := buf.Peek(buf.Len())
+	if len(p) == 0 {
+		return nil
+	}
+	c := make([]byte, len(p))
+	copy(c, p)
+	return c
 }
 
 func (buf *buffer) Next(n int) (p []byte, err error) {
@@ -256,6 +281,52 @@ func (buf *buffer) Write(p []byte) (n int, err error) {
 	buf.w += n
 	buf.a = buf.w
 	return
+}
+
+func (buf *buffer) WriteString(s string) (n int, err error) {
+	return buf.Write([]byte(s))
+}
+
+func (buf *buffer) WriteByte(c byte) (err error) {
+	if buf.Borrowing() {
+		err = ErrWriteBeforeAllocated
+		return
+	}
+	if buf.c-buf.w < 1 {
+		if err = buf.grow(1); err != nil {
+			return
+		}
+	}
+	buf.b[buf.w] = c
+	buf.w++
+	buf.a = buf.w
+	return
+}
+
+func (buf *buffer) Set(p []byte) (err error) {
+	if buf.Borrowing() {
+		err = ErrWriteBeforeAllocated
+		return
+	}
+	buf.w = buf.r
+	pLen := len(p)
+	if pLen == 0 {
+		buf.a = buf.w
+		return
+	}
+	if buf.c-buf.w < pLen {
+		if err = buf.grow(pLen); err != nil {
+			return
+		}
+	}
+	n := copy(buf.b[buf.w:], p)
+	buf.w += n
+	buf.a = buf.w
+	return
+}
+
+func (buf *buffer) SetString(s string) (err error) {
+	return buf.Set([]byte(s))
 }
 
 func (buf *buffer) ReadFrom(r io.Reader) (n int64, err error) {
