@@ -17,7 +17,12 @@ const (
 	maxPercentile           = 0.95
 )
 
-var defaultBufferPool BufferPool
+var defaultBufferPool = BufferPool{
+	calls:       [20]uint64{},
+	defaultSize: minSize,
+	maxSize:     maxSize,
+	pool:        sync.Pool{},
+}
 
 // Acquire
 // 请求一个 Buffer。
@@ -48,20 +53,18 @@ func (p *BufferPool) Acquire() Buffer {
 
 func (p *BufferPool) Release(b Buffer) {
 	if ok := b.Reset(); ok {
-		if b.Cap() > maxSize {
-			_ = b.Close()
+		bCap := b.Cap()
+		if bCap > maxSize {
 			return
 		}
-		idx := p.index(b.Len())
+		idx := p.index(bCap)
 
 		if atomic.AddUint64(&p.calls[idx], 1) > calibrateCallsThreshold {
 			p.calibrate()
 		}
 		size := int(atomic.LoadUint64(&p.maxSize))
-		if size == 0 || b.Cap() <= size {
+		if size == 0 || bCap <= size {
 			p.pool.Put(b)
-		} else {
-			_ = b.Close()
 		}
 		return
 	}

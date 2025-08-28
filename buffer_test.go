@@ -3,10 +3,11 @@ package bytebuffers_test
 import (
 	"bytes"
 	"crypto/rand"
-	"github.com/brickingsoft/bytebuffers"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/brickingsoft/bytebuffers"
 )
 
 func TestBuffer(t *testing.T) {
@@ -40,7 +41,8 @@ func TestBuffer_Borrow(t *testing.T) {
 }
 
 func TestBuffer_Read(t *testing.T) {
-	buf := bytebuffers.NewBuffer()
+	buf := bytebuffers.Acquire()
+	defer bytebuffers.Release(buf)
 	_, _ = buf.Write([]byte("0123456789"))
 	p := make([]byte, 5)
 	n, err := buf.Read(p)
@@ -48,16 +50,11 @@ func TestBuffer_Read(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log(n, string(p), string(buf.Peek(5)))
+	buf.Discard(5)
 }
 
 func TestBuffer_Write(t *testing.T) {
 	buf := bytebuffers.NewBuffer()
-	defer func() {
-		err := buf.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
 	t.Log(buf.Cap(), buf.Len()) //  4096 0
 	pagesize := os.Getpagesize()
 	firstData := []byte(strings.Repeat("a", pagesize/8))
@@ -78,13 +75,13 @@ func TestBuffer_Write(t *testing.T) {
 	if rErr != nil {
 		t.Fatal(rErr)
 	}
-	t.Log("r1", rn, buf.Len(), buf.Cap(), bytes.Equal(p, firstData)) // r1 4096 512 8192
+	t.Log("r1", rn, buf.Len(), buf.Cap(), bytes.Equal(p, firstData)) // r1 512 4096 8192 true
 	p = make([]byte, pagesize)
 	rn, rErr = buf.Read(p)
 	if rErr != nil {
 		t.Fatal(rErr)
 	}
-	t.Log("r2", rn, buf.Len(), buf.Cap(), bytes.Equal(p, secondData)) // r2 512 0 8192
+	t.Log("r2", rn, buf.Len(), buf.Cap(), bytes.Equal(p, secondData)) // r2 4096 0 8192 true
 
 	wn, wErr = buf.Write(secondData)
 	if wErr != nil {
@@ -94,7 +91,7 @@ func TestBuffer_Write(t *testing.T) {
 }
 
 // BenchmarkBuffer
-// BenchmarkBuffer-20    	13330725	        82.67 ns/op	       0 B/op	       0 allocs/op
+// BenchmarkBuffer-20    	13220983	        86.01 ns/op	       0 B/op	       0 allocs/op
 func BenchmarkBuffer(b *testing.B) {
 	b.ReportAllocs()
 

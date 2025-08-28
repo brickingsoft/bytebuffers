@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"runtime"
 	"unsafe"
 )
 
@@ -30,6 +29,9 @@ type Buffer interface {
 	// Read
 	// 读取
 	Read(p []byte) (n int, err error)
+	// ReadByte
+	// 读取一个字节
+	ReadByte() (b byte, err error)
 	// ReadBytes
 	// 以 delim 读
 	ReadBytes(delim byte) (line []byte, err error)
@@ -39,6 +41,12 @@ type Buffer interface {
 	// Write
 	// 写入
 	Write(p []byte) (n int, err error)
+	// ReadFrom
+	// 从一流里读取
+	ReadFrom(r io.Reader) (n int64, err error)
+	// WriteTo
+	// 写入一个流
+	WriteTo(w io.Writer) (n int64, err error)
 	// Borrow
 	// 借出
 	Borrow(size int) (p []byte, err error)
@@ -51,9 +59,6 @@ type Buffer interface {
 	// Reset
 	// 重置
 	Reset() bool
-	// Close
-	// 关闭
-	Close() (err error)
 }
 
 const maxInt = int(^uint(0) >> 1)
@@ -94,10 +99,6 @@ func NewBufferWithSize(size int) Buffer {
 		panic(fmt.Sprintf("bytebuffers.Buffer: new buffer with size failed, %v", err))
 		return nil
 	}
-	runtime.SetFinalizer(b, func(buf *buffer) {
-		_ = buf.Close()
-		runtime.KeepAlive(buf)
-	})
 	return b
 }
 
@@ -171,6 +172,18 @@ func (buf *buffer) Read(p []byte) (n int, err error) {
 	return
 }
 
+func (buf *buffer) ReadByte() (b byte, err error) {
+	bLen := buf.Len()
+	if bLen == 0 {
+		err = io.EOF
+		return
+	}
+	b = buf.b[buf.r]
+	buf.r++
+	buf.Reset()
+	return
+}
+
 func (buf *buffer) ReadBytes(delim byte) (line []byte, err error) {
 	bLen := buf.Len()
 	if bLen == 0 {
@@ -229,8 +242,8 @@ func (buf *buffer) Write(p []byte) (n int, err error) {
 		return
 	}
 
-	if m := buf.w + pLen - buf.Cap(); m > 0 {
-		if err = buf.grow(m); err != nil {
+	if buf.c-buf.w < pLen {
+		if err = buf.grow(pLen); err != nil {
 			return
 		}
 	}
@@ -238,6 +251,44 @@ func (buf *buffer) Write(p []byte) (n int, err error) {
 	n = copy(buf.b[buf.w:], p)
 	buf.w += n
 	buf.a = buf.w
+	return
+}
+
+func (buf *buffer) ReadFrom(r io.Reader) (n int64, err error) {
+	if buf.Borrowing() {
+		err = ErrWriteBeforeAllocated
+		return
+	}
+	for {
+		if buf.w == buf.c {
+			if err = buf.grow(1); err != nil {
+				return
+			}
+		}
+		rn, rErr := r.Read(buf.b[buf.w:])
+		buf.w += rn
+		n += int64(rn)
+		if rErr != nil {
+			if errors.Is(rErr, io.EOF) {
+				break
+			}
+			err = rErr
+			return
+		}
+	}
+	return
+}
+
+func (buf *buffer) WriteTo(w io.Writer) (n int64, err error) {
+	for buf.r < buf.w {
+		wn, wErr := w.Write(buf.b[buf.r:buf.w])
+		buf.r += wn
+		n += int64(wn)
+		if wErr != nil {
+			err = wErr
+			return
+		}
+	}
 	return
 }
 
@@ -254,11 +305,13 @@ func (buf *buffer) Borrow(size int) (p []byte, err error) {
 		err = ErrAllocateZero
 		return
 	}
-	if m := buf.w + size - buf.Cap(); m > 0 {
-		if err = buf.grow(m); err != nil {
+
+	if buf.c-buf.w < size {
+		if err = buf.grow(size); err != nil {
 			return
 		}
 	}
+
 	p = buf.b[buf.w : buf.w+size]
 	buf.a += size
 	return
@@ -287,45 +340,49 @@ func (buf *buffer) Reset() bool {
 	return ok
 }
 
-func (buf *buffer) Close() (err error) {
-	runtime.SetFinalizer(buf, nil)
-	buf.b = nil
-	return
-}
-
 func (buf *buffer) grow(n int) (err error) {
 	if n < 1 {
 		return
 	}
 
-	if buf.b != nil {
-		if buf.r > 0 {
-			n -= buf.r
-			// left shift
-			copy(buf.b, buf.b[buf.r:buf.w])
-			buf.w -= buf.r
-			buf.a = buf.w
-			buf.r = 0
-			if n < 1 {
-				return
-			}
-		}
+	if buf.b == nil { // init buffer
+		adjustedSize := adjustBufferSize(n)
+		buf.r = 0
+		buf.w = 0
+		buf.a = 0
+		buf.c += adjustedSize
+		buf.b = make([]byte, adjustedSize)
+		return
 	}
 
-	if buf.c > maxInt-buf.c-n {
+	bLen := buf.Len()
+	bCap := buf.Cap()
+
+	if remains := bCap - bLen; n <= remains { // n <= remains then left shift
+		copy(buf.b, buf.b[buf.r:buf.w])
+		buf.r = 0
+		buf.w = bLen
+		buf.a = buf.w
+		return
+	} else { // sub n
+		n = n - remains
+	}
+
+	if buf.c > maxInt-buf.c-n { // check too large
 		err = ErrTooLarge
 		return
 	}
 
-	// has no more place
+	// grow
 	adjustedSize := adjustBufferSize(n)
-	bCap := buf.Cap()
 	nb := make([]byte, adjustedSize+bCap)
-	copy(nb, buf.b[buf.r:buf.w])
-	buf.b = nb
+	if bLen > 0 { // has data then copy
+		copy(nb, buf.b[buf.r:buf.w])
+	}
 	buf.r = 0
-	buf.w = buf.Len()
+	buf.w = bLen
 	buf.a = buf.w
 	buf.c += adjustedSize
+	buf.b = nb
 	return
 }
