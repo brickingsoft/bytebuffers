@@ -12,7 +12,7 @@ import (
 
 func TestBuffer(t *testing.T) {
 	buf := bytebuffers.NewBuffer()
-	t.Log(buf.Cap(), buf.Len())
+	t.Log(buf.Capacity(), buf.Len())
 	t.Log(buf.Write([]byte("0123456789")))
 	t.Log(buf.Len())
 	p5 := buf.Peek(5)
@@ -24,7 +24,7 @@ func TestBuffer(t *testing.T) {
 		t.Fatal(nextErr)
 	}
 	t.Log(string(nexted))
-	t.Log(buf.Len(), buf.Cap())
+	t.Log(buf.Len(), buf.Capacity())
 }
 
 func TestBuffer_Borrow(t *testing.T) {
@@ -55,39 +55,39 @@ func TestBuffer_Read(t *testing.T) {
 
 func TestBuffer_Write(t *testing.T) {
 	buf := bytebuffers.NewBuffer()
-	t.Log(buf.Cap(), buf.Len()) //  4096 0
+	t.Log(buf.Capacity(), buf.Len()) //  4096 0
 	pagesize := os.Getpagesize()
 	firstData := []byte(strings.Repeat("a", pagesize/8))
 	secondData := []byte(strings.Repeat("1", pagesize))
-	t.Log("f", len(firstData), "s", len(secondData)) // f 512 s 4096
+	t.Log("f", len(firstData), "h", len(secondData)) // f 512 h 4096
 	wn, wErr := buf.Write(firstData)
 	if wErr != nil {
 		t.Fatal(wErr)
 	}
-	t.Log("w1", wn, buf.Len(), buf.Cap(), len(firstData)) // w1 512 512 4096 512
+	t.Log("w1", wn, buf.Len(), buf.Capacity(), len(firstData)) // w1 512 512 4096 512
 	wn, wErr = buf.Write(secondData)
 	if wErr != nil {
 		t.Fatal(wErr)
 	}
-	t.Log("w2", wn, buf.Len(), buf.Cap(), len(secondData)) // w2 4096 4608 8192 4096
+	t.Log("w2", wn, buf.Len(), buf.Capacity(), len(secondData)) // w2 4096 4608 8192 4096
 	p := make([]byte, pagesize/8)
 	rn, rErr := buf.Read(p)
 	if rErr != nil {
 		t.Fatal(rErr)
 	}
-	t.Log("r1", rn, buf.Len(), buf.Cap(), bytes.Equal(p, firstData)) // r1 512 4096 8192 true
+	t.Log("r1", rn, buf.Len(), buf.Capacity(), bytes.Equal(p, firstData)) // r1 512 4096 8192 true
 	p = make([]byte, pagesize)
 	rn, rErr = buf.Read(p)
 	if rErr != nil {
 		t.Fatal(rErr)
 	}
-	t.Log("r2", rn, buf.Len(), buf.Cap(), bytes.Equal(p, secondData)) // r2 4096 0 8192 true
+	t.Log("r2", rn, buf.Len(), buf.Capacity(), bytes.Equal(p, secondData)) // r2 4096 0 8192 true
 
 	wn, wErr = buf.Write(secondData)
 	if wErr != nil {
 		t.Fatal(wErr)
 	}
-	t.Log("w3", wn, buf.Len(), buf.Cap(), len(secondData)) // w3 4096 4096 8192 4096
+	t.Log("w3", wn, buf.Len(), buf.Capacity(), len(secondData)) // w3 4096 4096 8192 4096
 }
 
 // BenchmarkBuffer

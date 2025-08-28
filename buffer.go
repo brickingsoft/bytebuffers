@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"unsafe"
 )
 
@@ -14,9 +13,12 @@ type Buffer interface {
 	// Len
 	// 长度
 	Len() (n int)
-	// Cap
+	// Capacity
 	// 容量
-	Cap() (n int)
+	Capacity() (n int)
+	// CapacityHint
+	// 容量提示
+	CapacityHint() (hint int)
 	// Peek
 	// 查看 n 个字节，但不会读掉。
 	Peek(n int) (p []byte)
@@ -64,29 +66,26 @@ type Buffer interface {
 const maxInt = int(^uint(0) >> 1)
 
 var (
-	pagesize = os.Getpagesize()
-)
-
-var (
 	ErrTooLarge             = errors.New("bytebuffers.Buffer: too large")
 	ErrWriteBeforeAllocated = errors.New("bytebuffers.Buffer: cannot write before Allocated(), cause prev Allocate() was not finished, please call Allocated() after the area was written")
 	ErrAllocateZero         = errors.New("bytebuffers.Buffer: cannot allocate zero")
 )
 
-func adjustBufferSize(size int) int {
-	return int(math.Ceil(float64(size)/float64(pagesize)) * float64(pagesize))
+func adjustBufferSize(size int, base int) int {
+	return int(math.Ceil(float64(size)/float64(base)) * float64(base))
 }
 
 func NewBuffer() Buffer {
-	return NewBufferWithSize(1)
+	return NewBufferWithCapacityHint(minHint)
 }
 
-func NewBufferWithSize(size int) Buffer {
-	if size <= 0 {
-		size = 1
+func NewBufferWithCapacityHint(hint int) Buffer {
+	if hint <= 0 {
+		hint = minHint
 	}
 	b := &buffer{
 		bufferFields: bufferFields{
+			h: hint,
 			c: 0,
 			r: 0,
 			w: 0,
@@ -94,7 +93,7 @@ func NewBufferWithSize(size int) Buffer {
 		},
 		b: nil,
 	}
-	err := b.grow(size)
+	err := b.grow(1)
 	if err != nil {
 		panic(fmt.Sprintf("bytebuffers.Buffer: new buffer with size failed, %v", err))
 		return nil
@@ -103,6 +102,7 @@ func NewBufferWithSize(size int) Buffer {
 }
 
 type bufferFields struct {
+	h int
 	c int
 	r int
 	w int
@@ -118,7 +118,11 @@ type buffer struct {
 
 func (buf *buffer) Len() int { return buf.w - buf.r }
 
-func (buf *buffer) Cap() int { return buf.c }
+func (buf *buffer) Capacity() int { return buf.c }
+
+func (buf *buffer) CapacityHint() int {
+	return buf.h
+}
 
 func (buf *buffer) Peek(n int) (p []byte) {
 	bLen := buf.Len()
@@ -346,7 +350,7 @@ func (buf *buffer) grow(n int) (err error) {
 	}
 
 	if buf.b == nil { // init buffer
-		adjustedSize := adjustBufferSize(n)
+		adjustedSize := adjustBufferSize(n, buf.h)
 		buf.r = 0
 		buf.w = 0
 		buf.a = 0
@@ -356,7 +360,7 @@ func (buf *buffer) grow(n int) (err error) {
 	}
 
 	bLen := buf.Len()
-	bCap := buf.Cap()
+	bCap := buf.Capacity()
 
 	if remains := bCap - bLen; n <= remains { // n <= remains then left shift
 		copy(buf.b, buf.b[buf.r:buf.w])
@@ -374,7 +378,7 @@ func (buf *buffer) grow(n int) (err error) {
 	}
 
 	// grow
-	adjustedSize := adjustBufferSize(n)
+	adjustedSize := adjustBufferSize(n, buf.h)
 	nb := make([]byte, adjustedSize+bCap)
 	if bLen > 0 { // has data then copy
 		copy(nb, buf.b[buf.r:buf.w])
