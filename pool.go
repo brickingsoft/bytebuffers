@@ -1,6 +1,7 @@
 package bytebuffers
 
 import (
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -10,7 +11,7 @@ const (
 	minBitSize = 6
 	steps      = 20
 
-	minSize = 1 << minBitSize
+	minHint = 1 << minBitSize
 	maxSize = 1 << (minBitSize + steps - 1)
 
 	calibrateCallsThreshold = 42000
@@ -19,7 +20,8 @@ const (
 
 var defaultBufferPool = BufferPool{
 	calls:       [20]uint64{},
-	defaultSize: minSize,
+	dynamicHint: true,
+	defaultHint: minHint,
 	maxSize:     maxSize,
 	pool:        sync.Pool{},
 }
@@ -33,11 +35,36 @@ func Acquire() Buffer { return defaultBufferPool.Acquire() }
 // 即无可读或无未完成分配的情况下可回收。
 func Release(b Buffer) { defaultBufferPool.Release(b) }
 
+var pagesizeBufferPool = BufferPool{
+	calls:       [20]uint64{},
+	dynamicHint: false,
+	defaultHint: uint64(os.Getpagesize()),
+	maxSize:     maxSize,
+	pool:        sync.Pool{},
+}
+
+// AcquirePageSize
+// 请求一个系统页大小的 Buffer。
+func AcquirePageSize() Buffer { return pagesizeBufferPool.Acquire() }
+
+// ReleasePageSize
+// 回收系统页大小的 Buffer，只有当 Buffer.Reset 成功才回收，否则关闭并丢弃。
+// 即无可读或无未完成分配的情况下可回收。
+func ReleasePageSize(b Buffer) {
+	if b == nil {
+		return
+	}
+	if uint64(b.CapacityHint()) == pagesizeBufferPool.defaultHint {
+		pagesizeBufferPool.Release(b)
+	}
+}
+
 type BufferPool struct {
 	calls       [steps]uint64
 	calibrating uint64
 
-	defaultSize uint64
+	dynamicHint bool
+	defaultHint uint64
 	maxSize     uint64
 
 	pool sync.Pool
@@ -48,20 +75,25 @@ func (p *BufferPool) Acquire() Buffer {
 	if v != nil {
 		return v.(Buffer)
 	}
-	return NewBufferWithSize(int(atomic.LoadUint64(&p.defaultSize)))
+	return NewBufferWithCapacityHint(int(atomic.LoadUint64(&p.defaultHint)))
 }
 
 func (p *BufferPool) Release(b Buffer) {
+	if b == nil {
+		return
+	}
 	if ok := b.Reset(); ok {
-		bCap := b.Cap()
+		bCap := b.Capacity()
 		if bCap > maxSize {
 			return
 		}
-		idx := p.index(bCap)
-
-		if atomic.AddUint64(&p.calls[idx], 1) > calibrateCallsThreshold {
-			p.calibrate()
+		if p.dynamicHint {
+			idx := p.index(bCap)
+			if atomic.AddUint64(&p.calls[idx], 1) > calibrateCallsThreshold {
+				p.calibrate()
+			}
 		}
+
 		size := int(atomic.LoadUint64(&p.maxSize))
 		if size == 0 || bCap <= size {
 			p.pool.Put(b)
@@ -96,7 +128,7 @@ func (p *BufferPool) calibrate() {
 		callsSum += calls
 		a = append(a, callSize{
 			calls: calls,
-			size:  minSize << i,
+			size:  minHint << i,
 		})
 	}
 	sort.Sort(a)
@@ -117,7 +149,7 @@ func (p *BufferPool) calibrate() {
 		}
 	}
 
-	atomic.StoreUint64(&p.defaultSize, defaultSize)
+	atomic.StoreUint64(&p.defaultHint, defaultSize)
 	atomic.StoreUint64(&p.maxSize, maxSizeOfCall)
 
 	atomic.StoreUint64(&p.calibrating, 0)
