@@ -69,12 +69,12 @@ type Buffer interface {
 	Borrow(size int) (p []byte, err error)
 	// Return
 	// 归还借出的实际使用量
-	Return(n int)
+	Return(used int)
 	// Borrowing
 	// 是否有借出
 	Borrowing() bool
 	// Reset
-	// 重置
+	// 重置，当 Borrowing 时，无法重置。
 	Reset() bool
 }
 
@@ -126,8 +126,6 @@ type bufferFields struct {
 
 type buffer struct {
 	bufferFields
-	// We want to use a finalizer, so ensure that the size is large enough to not use the tiny allocator.
-	_ [24 - unsafe.Sizeof(bufferFields{})%24]byte
 	b []byte
 }
 
@@ -175,11 +173,10 @@ func (buf *buffer) Next(n int) (p []byte, err error) {
 		n = bLen
 	}
 	p = make([]byte, n)
-	data := buf.b[buf.r : buf.r+n]
-	copy(p, data)
+	copy(p, buf.b[buf.r:buf.w])
 	buf.r += n
 
-	buf.Reset()
+	buf.shrink()
 	return
 }
 
@@ -197,7 +194,7 @@ func (buf *buffer) Read(p []byte) (n int, err error) {
 	n = copy(p, buf.b[buf.r:buf.w])
 	buf.r += n
 
-	buf.Reset()
+	buf.shrink()
 	return
 }
 
@@ -209,7 +206,7 @@ func (buf *buffer) ReadByte() (b byte, err error) {
 	}
 	b = buf.b[buf.r]
 	buf.r++
-	buf.Reset()
+	buf.shrink()
 	return
 }
 
@@ -221,7 +218,7 @@ func (buf *buffer) ReadBytes(delim byte) (line []byte, err error) {
 	}
 	i := bytes.IndexByte(buf.b[buf.r:buf.w], delim)
 	if i == -1 {
-		line = make([]byte, buf.w)
+		line = make([]byte, bLen)
 		n := copy(line, buf.b[buf.r:buf.w])
 		buf.r += n
 	} else {
@@ -232,7 +229,7 @@ func (buf *buffer) ReadBytes(delim byte) (line []byte, err error) {
 		buf.r += n
 	}
 
-	buf.Reset()
+	buf.shrink()
 	return
 }
 
@@ -257,7 +254,7 @@ func (buf *buffer) Discard(n int) {
 		n = bLen
 	}
 	buf.r += n
-	buf.Reset()
+	buf.shrink()
 	return
 }
 
@@ -284,7 +281,11 @@ func (buf *buffer) Write(p []byte) (n int, err error) {
 }
 
 func (buf *buffer) WriteString(s string) (n int, err error) {
-	return buf.Write([]byte(s))
+	if s == "" {
+		return
+	}
+	p := unsafe.Slice(unsafe.StringData(s), len(s))
+	return buf.Write(p)
 }
 
 func (buf *buffer) WriteByte(c byte) (err error) {
@@ -326,7 +327,17 @@ func (buf *buffer) Set(p []byte) (err error) {
 }
 
 func (buf *buffer) SetString(s string) (err error) {
-	return buf.Set([]byte(s))
+	if buf.Borrowing() {
+		err = ErrWriteBeforeAllocated
+		return
+	}
+	if s == "" {
+		buf.w = buf.r
+		buf.a = buf.w
+		return
+	}
+	p := unsafe.Slice(unsafe.StringData(s), len(s))
+	return buf.Set(p)
 }
 
 func (buf *buffer) ReadFrom(r io.Reader) (n int64, err error) {
@@ -342,6 +353,7 @@ func (buf *buffer) ReadFrom(r io.Reader) (n int64, err error) {
 		}
 		rn, rErr := r.Read(buf.b[buf.w:])
 		buf.w += rn
+		buf.a = buf.w
 		n += int64(rn)
 		if rErr != nil {
 			if errors.Is(rErr, io.EOF) {
@@ -392,20 +404,33 @@ func (buf *buffer) Borrow(size int) (p []byte, err error) {
 	return
 }
 
-func (buf *buffer) Return(n int) {
+func (buf *buffer) Return(used int) {
 	if buf.a == buf.w {
 		return
 	}
-	if n == 0 {
+	if used < 0 {
+		panic(errors.New("negative used"))
+	}
+	if used == 0 {
 		buf.a = buf.w
 	} else {
-		buf.w += n
+		buf.w += used
 		buf.a = buf.w
 	}
 	return
 }
 
 func (buf *buffer) Reset() bool {
+	ok := !buf.Borrowing()
+	if ok {
+		buf.r = 0
+		buf.w = 0
+		buf.a = 0
+	}
+	return ok
+}
+
+func (buf *buffer) shrink() bool {
 	ok := buf.r == buf.w && buf.a == buf.w
 	if ok {
 		buf.r = 0
@@ -419,6 +444,10 @@ func (buf *buffer) grow(n int) (err error) {
 	if n < 1 {
 		return
 	}
+	if buf.Borrowing() {
+		err = ErrWriteBeforeAllocated
+		return
+	}
 
 	if buf.b == nil { // init buffer
 		adjustedSize := adjustBufferSize(n, buf.h)
@@ -430,10 +459,15 @@ func (buf *buffer) grow(n int) (err error) {
 		return
 	}
 
+	buf.shrink()
 	bLen := buf.Len()
 	bCap := buf.Capacity()
 
-	if remains := bCap - bLen; n <= remains { // n <= remains then left shift
+	if remains := bCap - bLen; n <= remains { // n <= remains then try to left shift
+		if buf.r == 0 { // when read index is 0 then do not left shift
+			return
+		}
+		// has data then left shift
 		copy(buf.b, buf.b[buf.r:buf.w])
 		buf.r = 0
 		buf.w = bLen
