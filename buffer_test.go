@@ -3,7 +3,6 @@ package bytebuffers_test
 import (
 	"bytes"
 	"crypto/rand"
-	"os"
 	"strings"
 	"testing"
 
@@ -55,39 +54,70 @@ func TestBuffer_Read(t *testing.T) {
 
 func TestBuffer_Write(t *testing.T) {
 	buf := bytebuffers.NewBuffer()
-	t.Log(buf.Capacity(), buf.Len()) //  4096 0
-	pagesize := os.Getpagesize()
+	t.Log(buf.Capacity(), buf.Len()) //  64 0
+	pagesize := buf.Capacity()
 	firstData := []byte(strings.Repeat("a", pagesize/8))
 	secondData := []byte(strings.Repeat("1", pagesize))
-	t.Log("f", len(firstData), "h", len(secondData)) // f 512 h 4096
+	t.Log("first", len(firstData), "second", len(secondData)) // first 8 second 64
 	wn, wErr := buf.Write(firstData)
 	if wErr != nil {
 		t.Fatal(wErr)
 	}
-	t.Log("w1", wn, buf.Len(), buf.Capacity(), len(firstData)) // w1 512 512 4096 512
+	t.Log("w1", wn, buf.Len(), buf.Capacity(), len(firstData)) // w1 8 8 64 8
 	wn, wErr = buf.Write(secondData)
 	if wErr != nil {
 		t.Fatal(wErr)
 	}
-	t.Log("w2", wn, buf.Len(), buf.Capacity(), len(secondData)) // w2 4096 4608 8192 4096
+	t.Log("w2", wn, buf.Len(), buf.Capacity(), len(secondData)) // w2 64 72 128 64
 	p := make([]byte, pagesize/8)
 	rn, rErr := buf.Read(p)
 	if rErr != nil {
 		t.Fatal(rErr)
 	}
-	t.Log("r1", rn, buf.Len(), buf.Capacity(), bytes.Equal(p, firstData)) // r1 512 4096 8192 true
+	t.Log("r1", rn, buf.Len(), buf.Capacity(), bytes.Equal(p, firstData)) // r1 8 64 128 true
 	p = make([]byte, pagesize)
 	rn, rErr = buf.Read(p)
 	if rErr != nil {
 		t.Fatal(rErr)
 	}
-	t.Log("r2", rn, buf.Len(), buf.Capacity(), bytes.Equal(p, secondData)) // r2 4096 0 8192 true
+	t.Log("r2", rn, buf.Len(), buf.Capacity(), bytes.Equal(p, secondData)) // r2 64 0 128 true
 
-	wn, wErr = buf.Write(secondData)
+	wn, wErr = buf.Write(bytes.Repeat(secondData, 3))
 	if wErr != nil {
 		t.Fatal(wErr)
 	}
-	t.Log("w3", wn, buf.Len(), buf.Capacity(), len(secondData)) // w3 4096 4096 8192 4096
+	t.Log("w3", wn, buf.Len(), buf.Capacity(), len(secondData)) // w3 192 192 192 64
+}
+
+func TestBuffer_ReadFrom(t *testing.T) {
+	buf := bytebuffers.Acquire()
+	defer bytebuffers.Release(buf)
+	n := buf.Capacity()
+	src := bytes.NewBuffer([]byte("0123456789"))
+	src.Write(bytes.Repeat([]byte("a"), n))
+
+	rn, rErr := buf.ReadFrom(src)
+	if rErr != nil {
+		t.Fatal(rErr)
+	}
+	t.Log(rn, buf.Len(), rn == int64(10+n))
+
+}
+
+func TestBuffer_WriteTo(t *testing.T) {
+	buf := bytebuffers.Acquire()
+	defer bytebuffers.Release(buf)
+	n := buf.Capacity()
+	buf.Write([]byte("0123456789"))
+	buf.Write(bytes.Repeat([]byte("a"), n))
+
+	dst := bytes.NewBuffer(nil)
+
+	wn, wErr := buf.WriteTo(dst)
+	if wErr != nil {
+		t.Fatal(wErr)
+	}
+	t.Log(wn, buf.Len(), dst.Len() == int(wn))
 }
 
 func TestBuffer_Set(t *testing.T) {
