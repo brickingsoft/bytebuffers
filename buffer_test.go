@@ -55,7 +55,7 @@ func TestBuffer_Read(t *testing.T) {
 func TestBuffer_Write(t *testing.T) {
 	buf := bytebuffers.NewBuffer()
 	t.Log(buf.Capacity(), buf.Len()) //  64 0
-	pagesize := buf.Capacity()
+	pagesize := buf.CapacityHint()
 	firstData := []byte(strings.Repeat("a", pagesize/8))
 	secondData := []byte(strings.Repeat("1", pagesize))
 	t.Log("first", len(firstData), "second", len(secondData)) // first 8 second 64
@@ -100,7 +100,7 @@ func TestBuffer_ReadFrom(t *testing.T) {
 	if rErr != nil {
 		t.Fatal(rErr)
 	}
-	t.Log(rn, buf.Len(), rn == int64(10+n))
+	t.Log(rn, buf.Len(), rn == int64(10+n), string(buf.Peek(buf.Len())))
 
 }
 

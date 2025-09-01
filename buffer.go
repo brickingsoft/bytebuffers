@@ -3,9 +3,9 @@ package bytebuffers
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"math"
+	"math/bits"
 	"unsafe"
 )
 
@@ -58,6 +58,9 @@ type Buffer interface {
 	// ReadFrom
 	// 从一流里读取全部
 	ReadFrom(r io.Reader) (n int64, err error)
+	// ReadFromWithHint
+	// 以 hint 大小从一流里读取全部
+	ReadFromWithHint(r io.Reader, hint int) (n int64, err error)
 	// ReadFromLimited
 	// 从一流里读取 n 个字节
 	ReadFromLimited(r io.Reader, n int) (nn int, err error)
@@ -113,11 +116,6 @@ func NewBufferWithCapacityHint(hint int) Buffer {
 			a: 0,
 		},
 		b: nil,
-	}
-	err := b.grow(1)
-	if err != nil {
-		panic(fmt.Sprintf("bytebuffers.Buffer: new buffer with size failed, %v", err))
-		return nil
 	}
 	return b
 }
@@ -315,9 +313,12 @@ func (buf *buffer) Set(p []byte) (err error) {
 		err = ErrWriteBeforeAllocated
 		return
 	}
-	buf.w = buf.r
 	pLen := len(p)
 	if pLen == 0 {
+		if buf.c == 0 {
+			return
+		}
+		buf.w = buf.r
 		buf.a = buf.w
 		return
 	}
@@ -326,6 +327,7 @@ func (buf *buffer) Set(p []byte) (err error) {
 			return
 		}
 	}
+	buf.w = buf.r
 	n := copy(buf.b[buf.w:], p)
 	buf.w += n
 	buf.a = buf.w
@@ -338,6 +340,9 @@ func (buf *buffer) SetString(s string) (err error) {
 		return
 	}
 	if s == "" {
+		if buf.c == 0 {
+			return
+		}
 		buf.w = buf.r
 		buf.a = buf.w
 		return
@@ -347,13 +352,25 @@ func (buf *buffer) SetString(s string) (err error) {
 }
 
 func (buf *buffer) ReadFrom(r io.Reader) (n int64, err error) {
+	n, err = buf.ReadFromWithHint(r, 1)
+	return
+}
+
+func (buf *buffer) ReadFromWithHint(r io.Reader, hint int) (n int64, err error) {
 	if buf.Borrowing() {
 		err = ErrWriteBeforeAllocated
 		return
 	}
+	if hint < 1 {
+		hint = 1
+	}
+	if hint > buf.h {
+		shift := bits.Len(uint(hint) - 1)
+		hint = 1 << shift
+	}
 	for {
 		if buf.w == buf.c {
-			if err = buf.grow(1); err != nil {
+			if err = buf.grow(hint); err != nil {
 				return
 			}
 		}
