@@ -56,11 +56,17 @@ type Buffer interface {
 	// 重写入可读字符串
 	SetString(s string) (err error)
 	// ReadFrom
-	// 从一流里读取
+	// 从一流里读取全部
 	ReadFrom(r io.Reader) (n int64, err error)
+	// ReadFromLimited
+	// 从一流里读取 n 个字节
+	ReadFromLimited(r io.Reader, n int) (nn int, err error)
 	// WriteTo
-	// 写入一个流
+	// 全部写入一个流
 	WriteTo(w io.Writer) (n int64, err error)
+	// WriteToLimited
+	// 把 n 个字节写入一个流
+	WriteToLimited(w io.Writer, n int) (nn int, err error)
 	// CloneBytes
 	// 复制字节，非读操作。
 	CloneBytes() []byte
@@ -366,11 +372,56 @@ func (buf *buffer) ReadFrom(r io.Reader) (n int64, err error) {
 	return
 }
 
+func (buf *buffer) ReadFromLimited(r io.Reader, n int) (nn int, err error) {
+	if buf.Borrowing() {
+		err = ErrWriteBeforeAllocated
+		return
+	}
+	if n < 1 {
+		return
+	}
+	if err = buf.grow(n); err != nil {
+		return
+	}
+	for n > 0 {
+		rn, rErr := r.Read(buf.b[buf.w : buf.w+n])
+		buf.w += rn
+		buf.a = buf.w
+		nn += rn
+		n -= rn
+		if rErr != nil {
+			if errors.Is(rErr, io.EOF) {
+				break
+			}
+			err = rErr
+			return
+		}
+	}
+	return
+}
+
 func (buf *buffer) WriteTo(w io.Writer) (n int64, err error) {
 	for buf.r < buf.w {
 		wn, wErr := w.Write(buf.b[buf.r:buf.w])
 		buf.r += wn
 		n += int64(wn)
+		if wErr != nil {
+			err = wErr
+			return
+		}
+	}
+	return
+}
+
+func (buf *buffer) WriteToLimited(w io.Writer, n int) (nn int, err error) {
+	if bLen := buf.Len(); bLen < n {
+		n = bLen
+	}
+	for buf.r < buf.w && n > 0 {
+		wn, wErr := w.Write(buf.b[buf.r : buf.r+n])
+		buf.r += wn
+		n -= wn
+		nn += wn
 		if wErr != nil {
 			err = wErr
 			return

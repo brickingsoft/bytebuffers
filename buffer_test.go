@@ -104,6 +104,37 @@ func TestBuffer_ReadFrom(t *testing.T) {
 
 }
 
+func TestBuffer_ReadFromLimited(t *testing.T) {
+	buf := bytebuffers.Acquire()
+	defer bytebuffers.Release(buf)
+	n := buf.Capacity()
+	src := bytes.NewBuffer([]byte("0123456789"))
+	src.Write(bytes.Repeat([]byte("a"), n))
+
+	rn, rErr := buf.ReadFromLimited(src, 10)
+	if rErr != nil {
+		t.Fatal(rErr)
+	}
+	t.Log(rn, buf.Len(), rn == 10, string(buf.Peek(10)))
+}
+
+func TestBuffer_WriteToLimited(t *testing.T) {
+	buf := bytebuffers.Acquire()
+	defer bytebuffers.Release(buf)
+	n := buf.Capacity()
+	buf.Write([]byte("0123456789"))
+	buf.Write(bytes.Repeat([]byte("a"), n))
+	bn := buf.Len()
+
+	dst := bytes.NewBuffer(nil)
+
+	wn, wErr := buf.WriteToLimited(dst, 10)
+	if wErr != nil {
+		t.Fatal(wErr)
+	}
+	t.Log(wn, bn-buf.Len() == 10)
+}
+
 func TestBuffer_WriteTo(t *testing.T) {
 	buf := bytebuffers.Acquire()
 	defer bytebuffers.Release(buf)
