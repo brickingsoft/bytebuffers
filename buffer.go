@@ -90,9 +90,9 @@ type Buffer interface {
 const maxInt = int(^uint(0) >> 1)
 
 var (
-	ErrTooLarge             = errors.New("bytebuffers.Buffer: too large")
-	ErrWriteBeforeAllocated = errors.New("bytebuffers.Buffer: cannot write before Allocated(), cause prev Allocate() was not finished, please call Allocated() after the area was written")
-	ErrAllocateZero         = errors.New("bytebuffers.Buffer: cannot allocate zero")
+	ErrTooLarge           = errors.New("bytebuffers.Buffer: too large")
+	ErrWriteWhenBorrowing = errors.New("bytebuffers.Buffer: cannot write when borrowing, cause prev borrowed was not return, please call Return() after the area was used")
+	ErrBorrowZero         = errors.New("bytebuffers.Buffer: cannot borrow zero")
 )
 
 func adjustBufferSize(size int, base int) int {
@@ -264,7 +264,7 @@ func (buf *buffer) Discard(n int) {
 
 func (buf *buffer) Write(p []byte) (n int, err error) {
 	if buf.Borrowing() {
-		err = ErrWriteBeforeAllocated
+		err = ErrWriteWhenBorrowing
 		return
 	}
 	pLen := len(p)
@@ -294,7 +294,7 @@ func (buf *buffer) WriteString(s string) (n int, err error) {
 
 func (buf *buffer) WriteByte(c byte) (err error) {
 	if buf.Borrowing() {
-		err = ErrWriteBeforeAllocated
+		err = ErrWriteWhenBorrowing
 		return
 	}
 	if buf.c-buf.w < 1 {
@@ -310,7 +310,7 @@ func (buf *buffer) WriteByte(c byte) (err error) {
 
 func (buf *buffer) Set(p []byte) (err error) {
 	if buf.Borrowing() {
-		err = ErrWriteBeforeAllocated
+		err = ErrWriteWhenBorrowing
 		return
 	}
 	pLen := len(p)
@@ -336,7 +336,7 @@ func (buf *buffer) Set(p []byte) (err error) {
 
 func (buf *buffer) SetString(s string) (err error) {
 	if buf.Borrowing() {
-		err = ErrWriteBeforeAllocated
+		err = ErrWriteWhenBorrowing
 		return
 	}
 	if s == "" {
@@ -358,7 +358,7 @@ func (buf *buffer) ReadFrom(r io.Reader) (n int64, err error) {
 
 func (buf *buffer) ReadFromWithHint(r io.Reader, hint int) (n int64, err error) {
 	if buf.Borrowing() {
-		err = ErrWriteBeforeAllocated
+		err = ErrWriteWhenBorrowing
 		return
 	}
 	if hint < 1 {
@@ -391,7 +391,7 @@ func (buf *buffer) ReadFromWithHint(r io.Reader, hint int) (n int64, err error) 
 
 func (buf *buffer) ReadFromLimited(r io.Reader, n int) (nn int, err error) {
 	if buf.Borrowing() {
-		err = ErrWriteBeforeAllocated
+		err = ErrWriteWhenBorrowing
 		return
 	}
 	if n < 1 {
@@ -453,11 +453,11 @@ func (buf *buffer) Borrowing() bool {
 
 func (buf *buffer) Borrow(size int) (p []byte, err error) {
 	if buf.Borrowing() {
-		err = ErrWriteBeforeAllocated
+		err = ErrWriteWhenBorrowing
 		return
 	}
 	if size < 1 {
-		err = ErrAllocateZero
+		err = ErrBorrowZero
 		return
 	}
 
@@ -513,7 +513,7 @@ func (buf *buffer) grow(n int) (err error) {
 		return
 	}
 	if buf.Borrowing() {
-		err = ErrWriteBeforeAllocated
+		err = ErrWriteWhenBorrowing
 		return
 	}
 
