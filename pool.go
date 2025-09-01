@@ -1,7 +1,6 @@
 package bytebuffers
 
 import (
-	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -35,27 +34,28 @@ func Acquire() Buffer { return defaultBufferPool.Acquire() }
 // 即无可读或无未完成分配的情况下可回收。
 func Release(b Buffer) { defaultBufferPool.Release(b) }
 
-var pagesizeBufferPool = BufferPool{
-	calls:       [20]uint64{},
-	dynamicHint: false,
-	defaultHint: uint64(os.Getpagesize()),
-	maxSize:     maxSize,
-	pool:        sync.Pool{},
-}
-
-// AcquirePageSize
-// 请求一个系统页大小的 Buffer。
-func AcquirePageSize() Buffer { return pagesizeBufferPool.Acquire() }
-
-// ReleasePageSize
-// 回收系统页大小的 Buffer，只有当 Buffer.Reset 成功才回收，否则关闭并丢弃。
-// 即无可读或无未完成分配的情况下可回收。
-func ReleasePageSize(b Buffer) {
-	if b == nil {
-		return
+// Pool
+// 创建一个 BufferPool。
+//
+// 参数 hint 为默认创建 byte slice 的 基准容量。
+//
+// 参数 dynamic 为是否动态调整 hint 和 最大 byte slice 长度。
+func Pool(hint uint64, dynamic bool) BufferPool {
+	if hint < minHint || maxSize < hint {
+		return BufferPool{
+			calls:       [20]uint64{},
+			dynamicHint: dynamic,
+			defaultHint: hint,
+			maxSize:     maxSize,
+			pool:        sync.Pool{},
+		}
 	}
-	if uint64(b.CapacityHint()) == pagesizeBufferPool.defaultHint {
-		pagesizeBufferPool.Release(b)
+	return BufferPool{
+		calls:       [20]uint64{},
+		dynamicHint: dynamic,
+		defaultHint: minHint,
+		maxSize:     maxSize,
+		pool:        sync.Pool{},
 	}
 }
 
@@ -84,9 +84,7 @@ func (p *BufferPool) Release(b Buffer) {
 	}
 	if ok := b.Reset(); ok {
 		bCap := b.Capacity()
-		if bCap > maxSize {
-			return
-		}
+
 		if p.dynamicHint {
 			idx := p.index(bCap)
 			if atomic.AddUint64(&p.calls[idx], 1) > calibrateCallsThreshold {
