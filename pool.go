@@ -1,6 +1,8 @@
 package bytebuffers
 
 import (
+	"math/bits"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -18,10 +20,9 @@ const (
 )
 
 var defaultBufferPool = BufferPool{
-	calls:       [20]uint64{},
-	dynamicHint: true,
+	calls:       [steps]uint64{},
 	defaultHint: minHint,
-	maxSize:     maxSize,
+	maxSize:     0,
 	pool:        sync.Pool{},
 }
 
@@ -35,25 +36,24 @@ func Acquire() Buffer { return defaultBufferPool.Acquire() }
 func Release(b Buffer) { defaultBufferPool.Release(b) }
 
 // Pool
-// 创建一个 BufferPool。
+// 创建一个缓冲池。
 //
-// 参数 hint 为默认创建 byte slice 的 基准容量。
-//
-// 参数 dynamic 为是否动态调整 hint 和 最大 byte slice 长度。
-func Pool(hint uint64, dynamic bool) BufferPool {
-	if hint < minHint || maxSize < hint {
+// 参数 hint 为 缓冲的基准容量，最大为 page size。
+func Pool(hint int) BufferPool {
+	ps := os.Getpagesize()
+	if hint < minHint || hint > ps {
 		return BufferPool{
-			calls:       [20]uint64{},
-			dynamicHint: dynamic,
-			defaultHint: hint,
-			maxSize:     maxSize,
+			calls:       [steps]uint64{},
+			defaultHint: minHint,
+			maxSize:     0,
 			pool:        sync.Pool{},
 		}
 	}
+	shift := bits.Len(uint(hint) - 1)
+	hint = 1 << shift
 	return BufferPool{
-		calls:       [20]uint64{},
-		dynamicHint: dynamic,
-		defaultHint: minHint,
+		calls:       [steps]uint64{},
+		defaultHint: uint64(hint),
 		maxSize:     maxSize,
 		pool:        sync.Pool{},
 	}
@@ -63,7 +63,6 @@ type BufferPool struct {
 	calls       [steps]uint64
 	calibrating uint64
 
-	dynamicHint bool
 	defaultHint uint64
 	maxSize     uint64
 
@@ -84,12 +83,13 @@ func (p *BufferPool) Release(b Buffer) {
 	}
 	if ok := b.Reset(); ok {
 		bCap := b.Capacity()
+		if bCap >= maxSize {
+			return
+		}
 
-		if p.dynamicHint {
-			idx := p.index(bCap)
-			if atomic.AddUint64(&p.calls[idx], 1) > calibrateCallsThreshold {
-				p.calibrate()
-			}
+		idx := p.index(bCap)
+		if atomic.AddUint64(&p.calls[idx], 1) > calibrateCallsThreshold {
+			p.calibrate()
 		}
 
 		size := int(atomic.LoadUint64(&p.maxSize))
